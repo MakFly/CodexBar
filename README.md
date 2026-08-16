@@ -6,9 +6,13 @@
 [![Swift 6](https://img.shields.io/badge/Swift-6-f05138?style=flat-square)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-6e5aff?style=flat-square)](LICENSE)
 
+<img src="docs/social.png" alt="CodexBar — every AI coding limit in your menu bar. 69 providers." width="100%" />
+
 CodexBar is a macOS menu bar app that keeps AI coding-provider limits visible and shows when each window resets — Codex, OpenAI, Claude, Cursor, Gemini, Copilot, and many more. One status item per provider, no Dock icon, minimal UI.
 
 This build adds one thing on top: **when your Codex System account runs low, CodexBar promotes a healthier one for you.**
+
+<img src="docs/codexbar.png" alt="CodexBar menu popover with provider tiles, usage bars, and reset countdowns" width="520" />
 
 > Derived from [steipete/CodexBar](https://github.com/steipete/CodexBar) (MIT). See [Credits](#credits).
 
@@ -109,7 +113,17 @@ The System account is also pinned inside the per-refresh account cap, so its hea
 | `CodexAccountSwitchIslandPlacement.swift` | Pure placement resolver that avoids the notch band. |
 | `CodexAccountPromotionCoordinator.swift` | The single promotion choke point; emits `CodexAccountSwitchEvent`. |
 
-Covered by 25 tests across `CodexAccountFailoverPolicyTests` (8), `CodexAccountAutoFailoverCoordinatorTests` (7), and `CodexAccountSwitchIslandTests` (10). Strings are localized in every shipped locale; `docs/codex.md` documents the feature.
+Covered by 25 tests across `CodexAccountFailoverPolicyTests` (8), `CodexAccountAutoFailoverCoordinatorTests` (7), and `CodexAccountSwitchIslandTests` (10). Strings are localized in every shipped locale.
+
+---
+
+## Docs
+
+- [Codex provider](docs/codex.md) — accounts, the System slot, and the failover section.
+- [Codex OAuth](docs/codex-oauth.md) — how credentials are read and refreshed.
+- [Architecture](docs/architecture.md) — how providers, stores, and the status item fit together.
+- [Providers](docs/providers.md) — every supported provider and its data source.
+- [Releasing](docs/RELEASING.md) — packaging, signing, and notarization.
 
 ---
 
