@@ -1,0 +1,161 @@
+import CodexBarCore
+import Foundation
+
+extension StatusItemController {
+    func storeIconObservationSignature() -> String {
+        let showBrandPercent = self.settings.menuBarShowsBrandIconWithPercent
+        let mergeIcons = self.shouldMergeIcons
+        let visibleProviders = self.store.enabledProvidersForDisplay().map(\.rawValue).sorted().joined(separator: ",")
+        let providerSignatures: String
+        let primaryProvider: UsageProvider?
+        if mergeIcons {
+            let primary = self.primaryProviderForUnifiedIcon()
+            primaryProvider = primary
+            providerSignatures = self.providerStoreIconObservationSignature(
+                for: primary,
+                showBrandPercent: showBrandPercent)
+        } else {
+            primaryProvider = nil
+            providerSignatures = UsageProvider.allCases
+                .filter { self.isVisible($0) }
+                .map { self.providerStoreIconObservationSignature(for: $0, showBrandPercent: showBrandPercent) }
+                .joined(separator: "||")
+        }
+        return [
+            "merge=\(mergeIcons ? "1" : "0")",
+            "visible=\(visibleProviders)",
+            "primary=\(primaryProvider?.rawValue ?? "nil")",
+            "iconStyle=\(self.store.iconStyle.rawValue)",
+            "showUsed=\(self.settings.usageBarsShowUsed ? "1" : "0")",
+            "brandPercent=\(showBrandPercent ? "1" : "0")",
+            "hideCritters=\(self.settings.menuBarHidesCritters ? "1" : "0")",
+            "needsAnimation=\(self.needsMenuBarIconAnimation() ? "1" : "0")",
+            providerSignatures,
+        ].joined(separator: "|")
+    }
+
+    private func providerStoreIconObservationSignature(for provider: UsageProvider, showBrandPercent: Bool) -> String {
+        let snapshot = self.store.menuBarSnapshot(for: provider.instanceID)
+        let style = self.store.style(for: provider)
+        let resolved = self.resolvedMenuBarIconPercents(
+            provider: provider,
+            snapshot: snapshot,
+            style: style,
+            showUsed: self.settings.usageBarsShowUsed)
+        let creditsRemaining = self.menuBarCreditsRemainingForIcon(provider: provider, snapshot: snapshot)
+        let scopedWeekly = MenuBarLayoutSemanticWindowResolver.scopedWeeklyNamedWindow(snapshot: snapshot)
+        let displayText = showBrandPercent ? self.menuBarDisplayText(for: provider, snapshot: snapshot) : nil
+        let layoutCostSignature = showBrandPercent
+            ? self.storedMenuBarLayoutCostSignature(for: provider)
+            : nil
+        let layoutAccountSignature = showBrandPercent
+            ? self.storedMenuBarLayoutAccountSignature(for: provider, snapshot: snapshot)
+            : nil
+        let layoutPaceSignature = showBrandPercent
+            ? self.storedMenuBarLayoutPaceSignature(for: provider, snapshot: snapshot)
+            : nil
+        let layoutBalanceSignature = showBrandPercent
+            ? self.storedMenuBarLayoutBalanceSignature(for: provider, snapshot: snapshot)
+            : nil
+
+        return [
+            provider.rawValue,
+            "style=\(style.rawValue)",
+            "primary=\(Self.iconSignatureValue(resolved?.primary))",
+            "weekly=\(Self.iconSignatureValue(resolved?.secondary))",
+            "scopedWeekly=\(Self.iconSignatureValue(scopedWeekly?.window.usedPercent))",
+            "scopedTitle=\(scopedWeekly?.title ?? "nil")",
+            "credits=\(Self.iconSignatureValue(creditsRemaining))",
+            "stale=\(self.store.isStale(provider: provider) ? "1" : "0")",
+            "status=\(self.store.statusIndicator(for: provider).rawValue)",
+            "anim=\(self.shouldAnimate(provider: provider) ? "1" : "0")",
+            "refreshing=\(self.store.refreshingProviders.contains(provider.instanceID) ? "1" : "0")",
+            "text=\(displayText ?? "nil")",
+            "layoutCost=\(layoutCostSignature ?? "nil")",
+            "layoutAccount=\(layoutAccountSignature ?? "nil")",
+            "layoutPace=\(layoutPaceSignature ?? "nil")",
+            "layoutBalance=\(layoutBalanceSignature ?? "nil")",
+        ].joined(separator: "|")
+    }
+
+    private func storedMenuBarLayoutAccountSignature(
+        for provider: UsageProvider,
+        snapshot: UsageSnapshot?)
+        -> String?
+    {
+        let resolution = self.settings.menuBarLayoutResolution(for: provider)
+        guard !resolution.usesLegacyRendering,
+              resolution.layout.lines.joined().contains(.accountLabel),
+              let accountLabel = self.menuBarLayoutAccountLabel(provider: provider, snapshot: snapshot)
+        else { return nil }
+
+        var hasher = Hasher()
+        hasher.combine(accountLabel)
+        return String(hasher.finalize())
+    }
+
+    private func storedMenuBarLayoutCostSignature(for provider: UsageProvider) -> String? {
+        let resolution = self.settings.menuBarLayoutResolution(for: provider)
+        guard !resolution.usesLegacyRendering else { return nil }
+
+        let tokens = resolution.layout.lines.joined()
+        let showsToday = tokens.contains(.costToday)
+        let showsLast30Days = tokens.contains(.cost30d)
+        guard showsToday || showsLast30Days else { return nil }
+
+        let costs = self.menuBarLayoutCostStrings(provider: provider)
+        return [
+            "today=\(showsToday ? costs.today ?? "nil" : "unused")",
+            "last30Days=\(showsLast30Days ? costs.last30Days ?? "nil" : "unused")",
+        ].joined(separator: ",")
+    }
+
+    private func storedMenuBarLayoutBalanceSignature(
+        for provider: UsageProvider,
+        snapshot: UsageSnapshot?)
+        -> String?
+    {
+        let resolution = self.settings.menuBarLayoutResolution(for: provider)
+        guard !resolution.usesLegacyRendering,
+              resolution.layout.lines.joined().contains(.balance)
+        else { return nil }
+        return MenuBarLayoutBalanceResolver.balance(provider: provider, snapshot: snapshot)
+    }
+
+    /// Pace tokens change with the historical dataset, the work-day setting, and the clock — none of
+    /// which move the percent fields above. Without this contribution a `historicalPaceRevision` bump
+    /// wakes the observer but leaves the signature unchanged, so a custom pace token would keep its
+    /// stale value until an unrelated icon change forces a redraw.
+    private func storedMenuBarLayoutPaceSignature(
+        for provider: UsageProvider,
+        snapshot: UsageSnapshot?)
+        -> String?
+    {
+        let resolution = self.settings.menuBarLayoutResolution(for: provider)
+        guard !resolution.usesLegacyRendering else { return nil }
+
+        let paceWindows = Set(resolution.layout.lines.joined().compactMap { token -> PercentWindow? in
+            guard case let .pace(window) = token else { return nil }
+            return window
+        })
+        guard !paceWindows.isEmpty else { return nil }
+
+        let windows = self.menuBarLayoutWindows(provider: provider, snapshot: snapshot, now: Date())
+        return PercentWindow.allCases
+            .filter(paceWindows.contains)
+            .map { percentWindow in
+                let window: RateWindow? = switch percentWindow {
+                case .session: windows.session
+                case .weekly: windows.weekly
+                case .scopedWeekly: nil
+                case .automatic: windows.automatic
+                }
+                let pace = self.store.menuBarLayoutPaceText(
+                    provider: provider,
+                    window: window,
+                    minimumElapsedPercent: percentWindow == .weekly ? 1 : nil)
+                return "\(percentWindow.rawValue)=\(pace ?? "nil")"
+            }
+            .joined(separator: ",")
+    }
+}
